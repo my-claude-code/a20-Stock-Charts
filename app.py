@@ -336,11 +336,14 @@ for idx, (ticker, df) in enumerate(data.items()):
                 line=dict(color="#FF9800", width=1.5, dash="dot"),
                 opacity=0.8,
             ), row=1, col=1, secondary_y=True)
-            # Overbought / oversold reference lines
-            fig.add_hline(y=70, line_dash="dash", line_color="red",
-                          opacity=0.4, row=1, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green",
-                          opacity=0.4, row=1, col=1)
+            # Overbought / oversold reference lines on the RSI axis
+            for level, col_name, label in [(70, "red", "Overbought"), (30, "green", "Oversold")]:
+                fig.add_trace(go.Scatter(
+                    x=df.index, y=[level] * len(df.index),
+                    name=label, mode="lines",
+                    line=dict(color=col_name, width=1, dash="dash"),
+                    opacity=0.5, showlegend=False,
+                ), row=1, col=1, secondary_y=True)
             fig.update_yaxes(
                 range=[0, 100],
                 title_text="RSI",
