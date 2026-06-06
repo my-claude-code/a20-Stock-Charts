@@ -10,9 +10,47 @@ from datetime import datetime
 st.set_page_config(page_title="Stock Charts", layout="wide")
 st.title("Stock Price Comparison")
 
+# ── Shortcut button styling ───────────────────────────────────────────────────
+st.markdown("""
+<style>
+div[data-testid="column"] button {
+    width: 100%;
+    border-radius: 20px;
+    font-weight: bold;
+    font-size: 0.8em;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ── Shortcut toggles (session state) ─────────────────────────────────────────
+SHORTCUTS = {
+    "KO":      ("KO",   "Coca-Cola"),
+    "SPY":     ("SPY",  "S&P 500"),
+    "QQQ":     ("QQQ",  "Nasdaq"),
+}
+
+for key in SHORTCUTS:
+    if f"active_{key}" not in st.session_state:
+        st.session_state[f"active_{key}"] = False
+
+st.markdown("**Quick add:**")
+cols = st.columns(len(SHORTCUTS))
+for col, (key, (ticker, label)) in zip(cols, SHORTCUTS.items()):
+    active = st.session_state[f"active_{key}"]
+    icon   = "🟢" if active else "🔴"
+    if col.button(f"{icon} {label}", key=f"btn_{key}"):
+        st.session_state[f"active_{key}"] = not active
+        st.rerun()
+
+st.markdown("---")
+
 # ── Sidebar controls ──────────────────────────────────────────────────────────
 with st.sidebar:
     st.header("Settings")
+
+    # Merge active shortcuts into the ticker list
+    active_shortcuts = [t for key, (t, _) in SHORTCUTS.items()
+                        if st.session_state[f"active_{key}"]]
 
     tickers_input = st.text_input(
         "Stocks (comma separated)",
@@ -71,7 +109,8 @@ def compute_bb(series, window=20):
 
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
-tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+typed   = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+tickers = typed + [t for t in active_shortcuts if t not in typed]
 
 if not tickers:
     st.warning("Enter at least one ticker.")
