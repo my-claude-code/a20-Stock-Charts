@@ -265,16 +265,17 @@ for idx, (ticker, df) in enumerate(data.items()):
         f"{ticker}  ·  ${last_close:.2f}  ·  {pct_str}  ({period_label})",
         expanded=(idx == 0),
     ):
-        rows, row_heights = [1], [0.55]
-        if show_volume: rows.append(len(rows) + 1); row_heights.append(0.15)
-        if show_rsi:    rows.append(len(rows) + 1); row_heights.append(0.15)
-        if show_macd:   rows.append(len(rows) + 1); row_heights.append(0.15)
+        rows, row_heights = [1], [0.6]
+        if show_volume: rows.append(len(rows) + 1); row_heights.append(0.2)
+        if show_macd:   rows.append(len(rows) + 1); row_heights.append(0.2)
         total_rows = len(rows)
 
         subplot_titles = [ticker]
         if show_volume: subplot_titles.append("Volume")
-        if show_rsi:    subplot_titles.append("RSI (14)")
         if show_macd:   subplot_titles.append("MACD")
+
+        # Row 1 has a secondary Y axis for RSI
+        specs = [[{"secondary_y": True}]] + [[{"secondary_y": False}]] * (total_rows - 1)
 
         fig = make_subplots(
             rows=total_rows, cols=1,
@@ -282,6 +283,7 @@ for idx, (ticker, df) in enumerate(data.items()):
             row_heights=row_heights,
             subplot_titles=subplot_titles,
             vertical_spacing=0.04,
+            specs=specs,
         )
 
         if chart_type == "Candlestick":
@@ -290,12 +292,12 @@ for idx, (ticker, df) in enumerate(data.items()):
                 open=df["Open"], high=df["High"],
                 low=df["Low"],   close=df["Close"],
                 name=ticker, showlegend=False,
-            ), row=1, col=1)
+            ), row=1, col=1, secondary_y=False)
         else:
             fig.add_trace(go.Scatter(
                 x=df.index, y=close, name=ticker,
                 line=dict(color=color, width=1.5), showlegend=False,
-            ), row=1, col=1)
+            ), row=1, col=1, secondary_y=False)
 
         for show, window, ma_color, label in [
             (show_ma20,  20,  "#FFC107", "MA20"),
@@ -306,25 +308,48 @@ for idx, (ticker, df) in enumerate(data.items()):
                 fig.add_trace(go.Scatter(
                     x=df.index, y=close.rolling(window).mean(),
                     name=label, line=dict(color=ma_color, width=1),
-                ), row=1, col=1)
+                ), row=1, col=1, secondary_y=False)
 
         if show_ema:
             fig.add_trace(go.Scatter(
                 x=df.index, y=close.ewm(span=20, adjust=False).mean(),
                 name="EMA20", line=dict(color="#00BCD4", width=1, dash="dot"),
-            ), row=1, col=1)
+            ), row=1, col=1, secondary_y=False)
 
         if show_bb:
             upper, mid, lower = compute_bb(close)
             fig.add_trace(go.Scatter(
                 x=df.index, y=upper, name="BB Upper",
                 line=dict(color="rgba(150,150,150,0.5)", width=1),
-            ), row=1, col=1)
+            ), row=1, col=1, secondary_y=False)
             fig.add_trace(go.Scatter(
                 x=df.index, y=lower, name="BB Lower",
                 fill="tonexty", fillcolor="rgba(150,150,150,0.1)",
                 line=dict(color="rgba(150,150,150,0.5)", width=1),
-            ), row=1, col=1)
+            ), row=1, col=1, secondary_y=False)
+
+        # ── RSI on secondary Y axis (right side, 0-100) ────────────────────
+        if show_rsi:
+            rsi = compute_rsi(close)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=rsi, name="RSI (14)",
+                line=dict(color="#FF9800", width=1.5, dash="dot"),
+                opacity=0.8,
+            ), row=1, col=1, secondary_y=True)
+            # Overbought / oversold reference lines
+            fig.add_hline(y=70, line_dash="dash", line_color="red",
+                          opacity=0.4, row=1, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green",
+                          opacity=0.4, row=1, col=1)
+            fig.update_yaxes(
+                range=[0, 100],
+                title_text="RSI",
+                secondary_y=True,
+                row=1, col=1,
+                showgrid=False,
+                tickfont=dict(color="#FF9800"),
+                title_font=dict(color="#FF9800"),
+            )
 
         current_row = 2
 
@@ -335,17 +360,6 @@ for idx, (ticker, df) in enumerate(data.items()):
                 x=df.index, y=df["Volume"],
                 marker_color=vol_colors, name="Volume", showlegend=False,
             ), row=current_row, col=1)
-            current_row += 1
-
-        if show_rsi:
-            rsi = compute_rsi(close)
-            fig.add_trace(go.Scatter(
-                x=df.index, y=rsi, name="RSI",
-                line=dict(color="#FF9800", width=1.5), showlegend=False,
-            ), row=current_row, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red",   row=current_row, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=current_row, col=1)
-            fig.update_yaxes(range=[0, 100], row=current_row, col=1)
             current_row += 1
 
         if show_macd:
@@ -365,13 +379,14 @@ for idx, (ticker, df) in enumerate(data.items()):
             ), row=current_row, col=1)
 
         fig.update_layout(
-            height=250 + total_rows * 120,
+            height=300 + total_rows * 120,
             hovermode="x unified",
             xaxis_rangeslider_visible=False,
             margin=dict(l=0, r=0, t=30, b=0),
             legend=dict(orientation="h", yanchor="bottom", y=1.02),
         )
         fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
-        fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
+        fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)",
+                         secondary_y=False)
 
         st.plotly_chart(fig, use_container_width=True)
