@@ -202,8 +202,7 @@ if len(data) >= 2:
         st.markdown("**Daily return correlation**")
         daily_ret  = closes.pct_change().dropna()
         ret_corr   = daily_ret.corr()
-        st.dataframe(ret_corr.style.format("{:.2f}").background_gradient(
-            cmap="RdYlGn", vmin=-1, vmax=1), use_container_width=True)
+        st.dataframe(ret_corr.style.format("{:.2f}"), use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
