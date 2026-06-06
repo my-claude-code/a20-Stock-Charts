@@ -1,9 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import plotly.figure_factory as ff
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
+from datetime import datetime
 
 st.set_page_config(page_title="Stock Charts", layout="wide")
 st.title("Stock Price Comparison")
@@ -19,13 +21,13 @@ with st.sidebar:
     )
 
     period_options = {
-        "1 Month":   "1mo",
-        "3 Months":  "3mo",
-        "6 Months":  "6mo",
-        "1 Year":    "1y",
-        "2 Years":   "2y",
-        "5 Years":   "5y",
-        "Max":       "max",
+        "1 Month":  "1mo",
+        "3 Months": "3mo",
+        "6 Months": "6mo",
+        "1 Year":   "1y",
+        "2 Years":  "2y",
+        "5 Years":  "5y",
+        "Max":      "max",
     }
     period_label = st.selectbox("Period", list(period_options.keys()), index=3)
     period = period_options[period_label]
@@ -40,10 +42,9 @@ with st.sidebar:
     show_ema   = st.checkbox("EMA 20",          value=False)
 
     st.subheader("Panels")
-    show_volume = st.checkbox("Volume",          value=True)
-    show_rsi    = st.checkbox("RSI (14)",        value=True)
-    show_macd   = st.checkbox("MACD",            value=False)
-    show_pct    = st.checkbox("% Change comparison", value=False)
+    show_volume = st.checkbox("Volume",  value=True)
+    show_rsi    = st.checkbox("RSI (14)", value=True)
+    show_macd   = st.checkbox("MACD",    value=False)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -60,16 +61,13 @@ def compute_macd(series):
     ema26  = series.ewm(span=26, adjust=False).mean()
     macd   = ema12 - ema26
     signal = macd.ewm(span=9, adjust=False).mean()
-    hist   = macd - signal
-    return macd, signal, hist
+    return macd, signal, macd - signal
 
 
 def compute_bb(series, window=20):
-    ma    = series.rolling(window).mean()
-    std   = series.rolling(window).std()
-    upper = ma + 2 * std
-    lower = ma - 2 * std
-    return upper, ma, lower
+    ma  = series.rolling(window).mean()
+    std = series.rolling(window).std()
+    return ma + 2 * std, ma, ma - 2 * std
 
 
 # ── Fetch data ────────────────────────────────────────────────────────────────
@@ -85,7 +83,7 @@ with st.spinner("Fetching data..."):
         try:
             df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
             if df.empty:
-                st.warning(f"{ticker}: no data found — check the symbol.")
+                st.warning(f"{ticker}: no data found.")
             else:
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = df.columns.get_level_values(0)
@@ -97,166 +95,259 @@ if not data:
     st.error("No data loaded.")
     st.stop()
 
-
-# ── % Change comparison ───────────────────────────────────────────────────────
-if show_pct and len(data) > 1:
-    st.subheader("% Change from start")
-    fig_pct = go.Figure()
-    for ticker, df in data.items():
-        pct = (df["Close"] / df["Close"].iloc[0] - 1) * 100
-        fig_pct.add_trace(go.Scatter(x=df.index, y=pct, name=ticker, mode="lines"))
-    fig_pct.update_layout(
-        yaxis_title="% Change",
-        hovermode="x unified",
-        height=350,
-        margin=dict(l=0, r=0, t=20, b=0),
-    )
-    fig_pct.add_hline(y=0, line_dash="dash", line_color="grey")
-    st.plotly_chart(fig_pct, use_container_width=True)
-
-
-# ── Per-stock charts ──────────────────────────────────────────────────────────
 colors = ["#2196F3", "#FF5722", "#4CAF50", "#FF9800", "#9C27B0", "#00BCD4"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 1 — Combined comparison chart (all stocks together)
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Combined View")
+
+tab_pct, tab_abs = st.tabs(["% Change (normalized)", "Absolute prices"])
+
+with tab_pct:
+    fig_combined = go.Figure()
+    for i, (ticker, df) in enumerate(data.items()):
+        pct = (df["Close"] / df["Close"].iloc[0] - 1) * 100
+        fig_combined.add_trace(go.Scatter(
+            x=df.index, y=pct,
+            name=ticker,
+            line=dict(color=colors[i % len(colors)], width=2),
+            hovertemplate=f"<b>{ticker}</b><br>Date: %{{x|%Y-%m-%d}}<br>Change: %{{y:.2f}}%<extra></extra>",
+        ))
+    fig_combined.add_hline(y=0, line_dash="dash", line_color="grey", opacity=0.5)
+    fig_combined.update_layout(
+        height=400,
+        hovermode="x unified",
+        yaxis_title="% Change from start",
+        xaxis_rangeslider_visible=False,
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_combined, use_container_width=True)
+
+with tab_abs:
+    if len(data) == 1:
+        ticker, df = list(data.items())[0]
+        fig_abs = go.Figure(go.Scatter(
+            x=df.index, y=df["Close"],
+            name=ticker,
+            line=dict(color=colors[0], width=2),
+        ))
+    else:
+        # Multiple stocks: separate Y axes, shared X
+        fig_abs = make_subplots(specs=[[{"secondary_y": False}]])
+        for i, (ticker, df) in enumerate(data.items()):
+            fig_abs.add_trace(go.Scatter(
+                x=df.index, y=df["Close"],
+                name=ticker,
+                line=dict(color=colors[i % len(colors)], width=2),
+                yaxis=f"y{i+1}" if i > 0 else "y",
+            ))
+        # Add extra Y axes on the right
+        axis_configs = {}
+        for i in range(1, len(data)):
+            axis_configs[f"yaxis{i+1}"] = dict(
+                overlaying="y",
+                side="right",
+                showgrid=False,
+                title=list(data.keys())[i],
+                titlefont=dict(color=colors[i % len(colors)]),
+                tickfont=dict(color=colors[i % len(colors)]),
+                anchor="free" if i > 1 else "x",
+                position=1 - (i - 1) * 0.06,
+            )
+        fig_abs.update_layout(**axis_configs)
+
+    fig_abs.update_layout(
+        height=400,
+        hovermode="x unified",
+        xaxis_rangeslider_visible=False,
+        margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    )
+    st.plotly_chart(fig_abs, use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 2 — Correlation heatmap (only if 2+ stocks)
+# ══════════════════════════════════════════════════════════════════════════════
+if len(data) >= 2:
+    st.subheader("Correlation")
+
+    col_corr, col_stats = st.columns([1, 1])
+
+    with col_corr:
+        # Align all closing prices on the same dates
+        closes = pd.DataFrame({t: df["Close"] for t, df in data.items()}).dropna()
+        corr   = closes.corr()
+
+        labels = list(corr.columns)
+        z      = corr.values.tolist()
+        text   = [[f"{v:.2f}" for v in row] for row in corr.values]
+
+        fig_heatmap = go.Figure(go.Heatmap(
+            z=z, x=labels, y=labels, text=text,
+            texttemplate="%{text}",
+            colorscale="RdYlGn",
+            zmin=-1, zmax=1,
+            showscale=True,
+        ))
+        fig_heatmap.update_layout(
+            title="Price Correlation",
+            height=300,
+            margin=dict(l=0, r=0, t=40, b=0),
+        )
+        st.plotly_chart(fig_heatmap, use_container_width=True)
+
+    with col_stats:
+        st.markdown("**Period Summary**")
+        summary_rows = []
+        for ticker, df in data.items():
+            close = df["Close"]
+            pct   = (close.iloc[-1] / close.iloc[0] - 1) * 100
+            summary_rows.append({
+                "Ticker": ticker,
+                "Last":   f"${close.iloc[-1]:.2f}",
+                "High":   f"${df['High'].max():.2f}",
+                "Low":    f"${df['Low'].min():.2f}",
+                "Return": f"+{pct:.1f}%" if pct >= 0 else f"{pct:.1f}%",
+            })
+        st.dataframe(pd.DataFrame(summary_rows).set_index("Ticker"), use_container_width=True)
+
+        st.markdown("**Daily return correlation**")
+        daily_ret  = closes.pct_change().dropna()
+        ret_corr   = daily_ret.corr()
+        st.dataframe(ret_corr.style.format("{:.2f}").background_gradient(
+            cmap="RdYlGn", vmin=-1, vmax=1), use_container_width=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 3 — Individual detailed charts
+# ══════════════════════════════════════════════════════════════════════════════
+st.subheader("Individual Charts")
 
 for idx, (ticker, df) in enumerate(data.items()):
     color = colors[idx % len(colors)]
     close = df["Close"]
 
-    # Decide subplot rows
-    rows, row_heights = [1], [0.55]
-    if show_volume: rows.append(len(rows) + 1); row_heights.append(0.15)
-    if show_rsi:    rows.append(len(rows) + 1); row_heights.append(0.15)
-    if show_macd:   rows.append(len(rows) + 1); row_heights.append(0.15)
-    total_rows = len(rows)
+    last_close  = close.iloc[-1]
+    first_close = close.iloc[0]
+    pct_change  = (last_close / first_close - 1) * 100
+    pct_str     = f"+{pct_change:.1f}%" if pct_change >= 0 else f"{pct_change:.1f}%"
+    pct_color   = "green" if pct_change >= 0 else "red"
 
-    subplot_titles = [ticker]
-    if show_volume: subplot_titles.append("Volume")
-    if show_rsi:    subplot_titles.append("RSI (14)")
-    if show_macd:   subplot_titles.append("MACD")
+    with st.expander(
+        f"{ticker}  ·  ${last_close:.2f}  ·  {pct_str}  ({period_label})",
+        expanded=(idx == 0),
+    ):
+        rows, row_heights = [1], [0.55]
+        if show_volume: rows.append(len(rows) + 1); row_heights.append(0.15)
+        if show_rsi:    rows.append(len(rows) + 1); row_heights.append(0.15)
+        if show_macd:   rows.append(len(rows) + 1); row_heights.append(0.15)
+        total_rows = len(rows)
 
-    fig = make_subplots(
-        rows=total_rows, cols=1,
-        shared_xaxes=True,
-        row_heights=row_heights,
-        subplot_titles=subplot_titles,
-        vertical_spacing=0.04,
-    )
+        subplot_titles = [ticker]
+        if show_volume: subplot_titles.append("Volume")
+        if show_rsi:    subplot_titles.append("RSI (14)")
+        if show_macd:   subplot_titles.append("MACD")
 
-    # ── Price ──────────────────────────────────────────────────────────────
-    if chart_type == "Candlestick":
-        fig.add_trace(go.Candlestick(
-            x=df.index,
-            open=df["Open"], high=df["High"],
-            low=df["Low"],   close=df["Close"],
-            name=ticker, showlegend=False,
-        ), row=1, col=1)
-    else:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=close, name=ticker,
-            line=dict(color=color, width=1.5), showlegend=False,
-        ), row=1, col=1)
+        fig = make_subplots(
+            rows=total_rows, cols=1,
+            shared_xaxes=True,
+            row_heights=row_heights,
+            subplot_titles=subplot_titles,
+            vertical_spacing=0.04,
+        )
 
-    # ── Moving averages ────────────────────────────────────────────────────
-    ma_configs = [
-        (show_ma20,  20,  "#FFC107", "MA20"),
-        (show_ma50,  50,  "#FF5722", "MA50"),
-        (show_ma200, 200, "#9C27B0", "MA200"),
-    ]
-    for show, window, ma_color, label in ma_configs:
-        if show and len(close) >= window:
+        if chart_type == "Candlestick":
+            fig.add_trace(go.Candlestick(
+                x=df.index,
+                open=df["Open"], high=df["High"],
+                low=df["Low"],   close=df["Close"],
+                name=ticker, showlegend=False,
+            ), row=1, col=1)
+        else:
             fig.add_trace(go.Scatter(
-                x=df.index, y=close.rolling(window).mean(),
-                name=label, line=dict(color=ma_color, width=1),
+                x=df.index, y=close, name=ticker,
+                line=dict(color=color, width=1.5), showlegend=False,
             ), row=1, col=1)
 
-    if show_ema:
-        fig.add_trace(go.Scatter(
-            x=df.index, y=close.ewm(span=20, adjust=False).mean(),
-            name="EMA20", line=dict(color="#00BCD4", width=1, dash="dot"),
-        ), row=1, col=1)
+        for show, window, ma_color, label in [
+            (show_ma20,  20,  "#FFC107", "MA20"),
+            (show_ma50,  50,  "#FF5722", "MA50"),
+            (show_ma200, 200, "#9C27B0", "MA200"),
+        ]:
+            if show and len(close) >= window:
+                fig.add_trace(go.Scatter(
+                    x=df.index, y=close.rolling(window).mean(),
+                    name=label, line=dict(color=ma_color, width=1),
+                ), row=1, col=1)
 
-    if show_bb:
-        upper, mid, lower = compute_bb(close)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=upper, name="BB Upper",
-            line=dict(color="rgba(150,150,150,0.5)", width=1),
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=lower, name="BB Lower",
-            fill="tonexty", fillcolor="rgba(150,150,150,0.1)",
-            line=dict(color="rgba(150,150,150,0.5)", width=1),
-        ), row=1, col=1)
+        if show_ema:
+            fig.add_trace(go.Scatter(
+                x=df.index, y=close.ewm(span=20, adjust=False).mean(),
+                name="EMA20", line=dict(color="#00BCD4", width=1, dash="dot"),
+            ), row=1, col=1)
 
-    current_row = 2
+        if show_bb:
+            upper, mid, lower = compute_bb(close)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=upper, name="BB Upper",
+                line=dict(color="rgba(150,150,150,0.5)", width=1),
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=lower, name="BB Lower",
+                fill="tonexty", fillcolor="rgba(150,150,150,0.1)",
+                line=dict(color="rgba(150,150,150,0.5)", width=1),
+            ), row=1, col=1)
 
-    # ── Volume ─────────────────────────────────────────────────────────────
-    if show_volume:
-        vol_colors = ["#EF5350" if df["Close"].iloc[i] < df["Open"].iloc[i]
-                      else "#26A69A" for i in range(len(df))]
-        fig.add_trace(go.Bar(
-            x=df.index, y=df["Volume"],
-            marker_color=vol_colors, name="Volume", showlegend=False,
-        ), row=current_row, col=1)
-        current_row += 1
+        current_row = 2
 
-    # ── RSI ────────────────────────────────────────────────────────────────
-    if show_rsi:
-        rsi = compute_rsi(close)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=rsi, name="RSI",
-            line=dict(color="#FF9800", width=1.5), showlegend=False,
-        ), row=current_row, col=1)
-        fig.add_hline(y=70, line_dash="dash", line_color="red",   row=current_row, col=1)
-        fig.add_hline(y=30, line_dash="dash", line_color="green", row=current_row, col=1)
-        fig.update_yaxes(range=[0, 100], row=current_row, col=1)
-        current_row += 1
+        if show_volume:
+            vol_colors = ["#EF5350" if df["Close"].iloc[i] < df["Open"].iloc[i]
+                          else "#26A69A" for i in range(len(df))]
+            fig.add_trace(go.Bar(
+                x=df.index, y=df["Volume"],
+                marker_color=vol_colors, name="Volume", showlegend=False,
+            ), row=current_row, col=1)
+            current_row += 1
 
-    # ── MACD ───────────────────────────────────────────────────────────────
-    if show_macd:
-        macd, signal, hist = compute_macd(close)
-        hist_colors = ["#EF5350" if v < 0 else "#26A69A" for v in hist]
-        fig.add_trace(go.Bar(
-            x=df.index, y=hist, marker_color=hist_colors,
-            name="MACD Hist", showlegend=False,
-        ), row=current_row, col=1)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=macd, name="MACD",
-            line=dict(color="#2196F3", width=1.5),
-        ), row=current_row, col=1)
-        fig.add_trace(go.Scatter(
-            x=df.index, y=signal, name="Signal",
-            line=dict(color="#FF5722", width=1.5),
-        ), row=current_row, col=1)
+        if show_rsi:
+            rsi = compute_rsi(close)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=rsi, name="RSI",
+                line=dict(color="#FF9800", width=1.5), showlegend=False,
+            ), row=current_row, col=1)
+            fig.add_hline(y=70, line_dash="dash", line_color="red",   row=current_row, col=1)
+            fig.add_hline(y=30, line_dash="dash", line_color="green", row=current_row, col=1)
+            fig.update_yaxes(range=[0, 100], row=current_row, col=1)
+            current_row += 1
 
-    # ── Layout ─────────────────────────────────────────────────────────────
-    last_close = close.iloc[-1]
-    first_close = close.iloc[0]
-    pct_change = (last_close / first_close - 1) * 100
-    pct_str = f"+{pct_change:.1f}%" if pct_change >= 0 else f"{pct_change:.1f}%"
-    pct_color = "green" if pct_change >= 0 else "red"
+        if show_macd:
+            macd, signal, hist = compute_macd(close)
+            hist_colors = ["#EF5350" if v < 0 else "#26A69A" for v in hist]
+            fig.add_trace(go.Bar(
+                x=df.index, y=hist, marker_color=hist_colors,
+                name="MACD Hist", showlegend=False,
+            ), row=current_row, col=1)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=macd, name="MACD",
+                line=dict(color="#2196F3", width=1.5),
+            ), row=current_row, col=1)
+            fig.add_trace(go.Scatter(
+                x=df.index, y=signal, name="Signal",
+                line=dict(color="#FF5722", width=1.5),
+            ), row=current_row, col=1)
 
-    st.markdown(
-        f"### {ticker} &nbsp; <span style='color:{pct_color}'>{pct_str}</span> &nbsp;"
-        f"<span style='font-size:0.9em;color:grey'>Last: ${last_close:.2f}</span>",
-        unsafe_allow_html=True,
-    )
+        fig.update_layout(
+            height=250 + total_rows * 120,
+            hovermode="x unified",
+            xaxis_rangeslider_visible=False,
+            margin=dict(l=0, r=0, t=30, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        )
+        fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
+        fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
 
-    fig.update_layout(
-        height=250 + total_rows * 120,
-        hovermode="x unified",
-        xaxis_rangeslider_visible=False,
-        margin=dict(l=0, r=0, t=30, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02),
-    )
-    fig.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ── Stats table ────────────────────────────────────────────────────────
-    with st.expander(f"{ticker} — Key stats"):
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Last Close",   f"${last_close:.2f}")
-        col2.metric("Period High",  f"${df['High'].max():.2f}")
-        col3.metric("Period Low",   f"${df['Low'].min():.2f}")
-        col4.metric("Period Return", pct_str)
+        st.plotly_chart(fig, use_container_width=True)
