@@ -24,9 +24,11 @@ div[data-testid="column"] button {
 
 # ── Shortcut toggles (session state) ─────────────────────────────────────────
 SHORTCUTS = {
-    "KO":      ("KO",   "Coca-Cola"),
-    "SPY":     ("SPY",  "S&P 500"),
-    "QQQ":     ("QQQ",  "Nasdaq"),
+    "KO":   ("KO",   "Coca-Cola"),
+    "SPY":  ("SPY",  "S&P 500"),
+    "QQQ":  ("QQQ",  "Nasdaq"),
+    "MSFT": ("MSFT", "Microsoft"),
+    "PG":   ("PG",   "P&G"),
 }
 
 for key in SHORTCUTS:
