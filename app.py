@@ -127,45 +127,29 @@ with tab_pct:
     st.plotly_chart(fig_combined, use_container_width=True)
 
 with tab_abs:
-    if len(data) == 1:
-        ticker, df = list(data.items())[0]
-        fig_abs = go.Figure(go.Scatter(
+    n = len(data)
+    fig_abs = make_subplots(
+        rows=n, cols=1,
+        shared_xaxes=True,
+        subplot_titles=list(data.keys()),
+        vertical_spacing=0.06,
+    )
+    for i, (ticker, df) in enumerate(data.items()):
+        fig_abs.add_trace(go.Scatter(
             x=df.index, y=df["Close"],
             name=ticker,
-            line=dict(color=colors[0], width=2),
-        ))
-    else:
-        # Multiple stocks: separate Y axes, shared X
-        fig_abs = make_subplots(specs=[[{"secondary_y": False}]])
-        for i, (ticker, df) in enumerate(data.items()):
-            fig_abs.add_trace(go.Scatter(
-                x=df.index, y=df["Close"],
-                name=ticker,
-                line=dict(color=colors[i % len(colors)], width=2),
-                yaxis=f"y{i+1}" if i > 0 else "y",
-            ))
-        # Add extra Y axes on the right
-        axis_configs = {}
-        for i in range(1, len(data)):
-            axis_configs[f"yaxis{i+1}"] = dict(
-                overlaying="y",
-                side="right",
-                showgrid=False,
-                title=list(data.keys())[i],
-                titlefont=dict(color=colors[i % len(colors)]),
-                tickfont=dict(color=colors[i % len(colors)]),
-                anchor="free" if i > 1 else "x",
-                position=1 - (i - 1) * 0.06,
-            )
-        fig_abs.update_layout(**axis_configs)
-
+            line=dict(color=colors[i % len(colors)], width=2),
+            showlegend=True,
+        ), row=i + 1, col=1)
     fig_abs.update_layout(
-        height=400,
+        height=max(300, 200 * n),
         hovermode="x unified",
         xaxis_rangeslider_visible=False,
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=0, r=0, t=30, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
     )
+    fig_abs.update_xaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
+    fig_abs.update_yaxes(showgrid=True, gridcolor="rgba(128,128,128,0.1)")
     st.plotly_chart(fig_abs, use_container_width=True)
 
 
