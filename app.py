@@ -54,7 +54,7 @@ with st.sidebar:
 
     tickers_input = st.text_input(
         "Stocks (comma separated)",
-        value="AAPL, MSFT, GOOGL",
+        value="",
         help="e.g. AAPL, MSFT, TSLA, AMZN"
     )
 
