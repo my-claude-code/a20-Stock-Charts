@@ -31,6 +31,7 @@ SHORTCUTS = {
     "QQQ":  ("QQQ",  "Nasdaq"),
     "MSFT": ("MSFT", "Microsoft"),
     "PG":   ("PG",   "P&G"),
+    "PEP":  ("PEP",  "Pepsi"),
 }
 
 for key in SHORTCUTS:
@@ -46,59 +47,100 @@ for col, (key, (ticker, label)) in zip(cols, SHORTCUTS.items()):
         st.session_state[f"active_{key}"] = not active
         st.rerun()
 
-CSV_PATH = os.path.join(os.path.expanduser("~"), "Desktop", "stock_report.csv")
-CSV_HEADERS = ["Stock", "Date", "Time", "Price", "MA50", "MA200", "RSI"]
+CSV_PATH    = os.path.join(os.path.expanduser("~"), "Desktop", "stock_report.csv")
+CSV_HEADERS = ["Stock", "Date", "Hour", "Price", "MA50", "MA200", "RSI"]
 
-if st.button("📥 Generate CSV snapshot", type="primary"):
-    now        = datetime.now()
-    date_str   = now.strftime("%Y-%m-%d")
-    time_str   = now.strftime("%H:%M:%S")
-    rows_added = []
 
-    # Fetch 1 year of data for each active stock to have enough history
-    all_tickers = list({
-        t for key, (t, _) in SHORTCUTS.items()
-        if st.session_state[f"active_{key}"]
-    })
-    typed_extra = [t.strip().upper() for t in
-                   st.session_state.get("ticker_input", "").split(",") if t.strip()]
-    all_tickers += [t for t in typed_extra if t not in all_tickers]
+def parse_dates(raw):
+    """Parse comma-separated dates like 2025-04-23-22h into (date_str, hour_str)."""
+    results = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            parts     = entry.split("-")
+            date_part = f"{parts[0]}-{parts[1]}-{parts[2]}"
+            hour_part = parts[3] if len(parts) > 3 else "00h"
+            datetime.strptime(date_part, "%Y-%m-%d")  # validate
+            results.append((date_part, hour_part))
+        except Exception:
+            st.warning(f"Skipping invalid date: '{entry}' — use format YYYY-MM-DD-HHh")
+    return results
 
-    if not all_tickers:
+
+def fetch_indicators(sym, date_str):
+    """Return (price, ma50, ma200, rsi) for a given stock on a given date."""
+    from datetime import timedelta
+    target    = datetime.strptime(date_str, "%Y-%m-%d")
+    start     = (target - timedelta(days=310)).strftime("%Y-%m-%d")
+    end       = (target + timedelta(days=3)).strftime("%Y-%m-%d")
+    df        = yf.download(sym, start=start, end=end,
+                            auto_adjust=True, progress=False)
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    if df.empty:
+        raise ValueError("No data returned")
+
+    # Use last available row on or before target date
+    df = df[df.index <= pd.Timestamp(date_str)]
+    if df.empty:
+        raise ValueError(f"No trading data on or before {date_str}")
+
+    c     = df["Close"]
+    price = round(float(c.iloc[-1]), 2)
+    ma50  = round(float(c.rolling(50).mean().iloc[-1]),  2)
+    ma200 = round(float(c.rolling(200).mean().iloc[-1]), 2)
+
+    delta = c.diff()
+    gain  = delta.clip(lower=0).rolling(14).mean()
+    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+    rsi   = round(float((100 - 100 / (1 + gain / loss)).iloc[-1]), 2)
+
+    return price, ma50, ma200, rsi
+
+
+# ── Date input ────────────────────────────────────────────────────────────────
+st.markdown("**Dates** (format: `YYYY-MM-DD-HHh`, comma separated)")
+dates_input = st.text_input(
+    "dates_field",
+    label_visibility="collapsed",
+    placeholder="2025-04-23-22h, 2025-05-15-10h, 2025-06-01-09h",
+)
+
+if st.button("📥 Generate CSV", type="primary"):
+    active_tickers = [t for key, (t, _) in SHORTCUTS.items()
+                      if st.session_state[f"active_{key}"]]
+    parsed_dates   = parse_dates(dates_input)
+
+    if not active_tickers:
         st.warning("Activate at least one stock button first.")
+    elif not parsed_dates:
+        st.warning("Enter at least one date.")
     else:
         file_exists = os.path.isfile(CSV_PATH)
+        rows_added  = 0
+
         with open(CSV_PATH, "a", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
             if not file_exists:
                 writer.writeheader()
 
-            for sym in all_tickers:
-                try:
-                    df = yf.download(sym, period="1y", auto_adjust=True, progress=False)
-                    if isinstance(df.columns, pd.MultiIndex):
-                        df.columns = df.columns.get_level_values(0)
-                    c = df["Close"]
-
-                    ma50  = round(float(c.rolling(50).mean().iloc[-1]),  2)
-                    ma200 = round(float(c.rolling(200).mean().iloc[-1]), 2)
-
-                    delta = c.diff()
-                    gain  = delta.clip(lower=0).rolling(14).mean()
-                    loss  = (-delta.clip(upper=0)).rolling(14).mean()
-                    rsi   = round(float(100 - 100 / (1 + gain / loss)).iloc[-1], 2)
-
-                    price = round(float(c.iloc[-1]), 2)
-
-                    row = {"Stock": sym, "Date": date_str, "Time": time_str,
-                           "Price": price, "MA50": ma50, "MA200": ma200, "RSI": rsi}
-                    writer.writerow(row)
-                    rows_added.append(sym)
-                except Exception as e:
-                    st.error(f"{sym}: {e}")
+            for sym in active_tickers:
+                for date_str, hour_str in parsed_dates:
+                    try:
+                        price, ma50, ma200, rsi = fetch_indicators(sym, date_str)
+                        writer.writerow({
+                            "Stock": sym,   "Date":  date_str,
+                            "Hour":  hour_str, "Price": price,
+                            "MA50":  ma50,  "MA200": ma200, "RSI": rsi,
+                        })
+                        rows_added += 1
+                    except Exception as e:
+                        st.error(f"{sym} / {date_str}: {e}")
 
         if rows_added:
-            st.success(f"Appended {', '.join(rows_added)} → {CSV_PATH}")
+            st.success(f"Added {rows_added} row(s) → {CSV_PATH}")
 
 st.markdown("---")
 
