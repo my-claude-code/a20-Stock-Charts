@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 import plotly.figure_factory as ff
 from plotly.subplots import make_subplots
 from datetime import datetime
+import os
+import csv
 
 st.set_page_config(page_title="Stock Charts", layout="wide")
 st.title("Stock Price Comparison")
@@ -43,6 +45,60 @@ for col, (key, (ticker, label)) in zip(cols, SHORTCUTS.items()):
     if col.button(f"{icon} {label}", key=f"btn_{key}"):
         st.session_state[f"active_{key}"] = not active
         st.rerun()
+
+CSV_PATH = os.path.join(os.path.expanduser("~"), "Desktop", "stock_report.csv")
+CSV_HEADERS = ["Stock", "Date", "Time", "Price", "MA50", "MA200", "RSI"]
+
+if st.button("📥 Generate CSV snapshot", type="primary"):
+    now        = datetime.now()
+    date_str   = now.strftime("%Y-%m-%d")
+    time_str   = now.strftime("%H:%M:%S")
+    rows_added = []
+
+    # Fetch 1 year of data for each active stock to have enough history
+    all_tickers = list({
+        t for key, (t, _) in SHORTCUTS.items()
+        if st.session_state[f"active_{key}"]
+    })
+    typed_extra = [t.strip().upper() for t in
+                   st.session_state.get("ticker_input", "").split(",") if t.strip()]
+    all_tickers += [t for t in typed_extra if t not in all_tickers]
+
+    if not all_tickers:
+        st.warning("Activate at least one stock button first.")
+    else:
+        file_exists = os.path.isfile(CSV_PATH)
+        with open(CSV_PATH, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_HEADERS)
+            if not file_exists:
+                writer.writeheader()
+
+            for sym in all_tickers:
+                try:
+                    df = yf.download(sym, period="1y", auto_adjust=True, progress=False)
+                    if isinstance(df.columns, pd.MultiIndex):
+                        df.columns = df.columns.get_level_values(0)
+                    c = df["Close"]
+
+                    ma50  = round(float(c.rolling(50).mean().iloc[-1]),  2)
+                    ma200 = round(float(c.rolling(200).mean().iloc[-1]), 2)
+
+                    delta = c.diff()
+                    gain  = delta.clip(lower=0).rolling(14).mean()
+                    loss  = (-delta.clip(upper=0)).rolling(14).mean()
+                    rsi   = round(float(100 - 100 / (1 + gain / loss)).iloc[-1], 2)
+
+                    price = round(float(c.iloc[-1]), 2)
+
+                    row = {"Stock": sym, "Date": date_str, "Time": time_str,
+                           "Price": price, "MA50": ma50, "MA200": ma200, "RSI": rsi}
+                    writer.writerow(row)
+                    rows_added.append(sym)
+                except Exception as e:
+                    st.error(f"{sym}: {e}")
+
+        if rows_added:
+            st.success(f"Appended {', '.join(rows_added)} → {CSV_PATH}")
 
 st.markdown("---")
 
